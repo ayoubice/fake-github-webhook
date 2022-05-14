@@ -1,41 +1,57 @@
 package main
 
 import (
-	"fmt"
-	"io/ioutil"
-	"log"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
 )
 
+var payloadSample = payload{
+	"ref":      "refs/heads/changes",
+	"before":   "9049f1265b7d61be4a8904a9a27120d2064dab3b",
+	"after":    "0d1a26e67d8f5eaf1f6ba5c57fc3c7d91ac0fd1c",
+	"created":  false,
+	"deleted":  false,
+	"forced":   false,
+	"base_ref": nil,
+	"compare":  "https://github.com/baxterthehacker/public-repo/compare/9049f1265b7d...0d1a26e67d8f",
+}
+
+const dataDir = "./data"
+
 func TestSendPayload(t *testing.T) {
-	testFile := "payload.json"
 
-	echoServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := ioutil.ReadAll(r.Body)
-		fmt.Fprintf(w, string(body))
+	echoSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+
+		var p payload
+		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
+			t.Fatal("[echo Server] enable to decode the request body as an event payload")
+		}
+
+		if !cmp.Equal(p, payloadSample) {
+			t.Errorf("mismatch between payloads (sent, received) %s", cmp.Diff(payloadSample, p))
+		}
 	}))
-	defer echoServer.Close()
 
-	resEchoServer, err := sendPayload(echoServer.URL, testFile)
+	defer echoSrv.Close()
 
+	err := sendPayload(echoSrv.URL, payloadSample)
 	if err != nil {
 		t.Fatalf("Error sending payload to echoServer: %v", err)
 	}
+}
 
-	respPayload, err := ioutil.ReadAll(resEchoServer.Body)
-	resEchoServer.Body.Close()
+func TestLoadSequences(t *testing.T) {
+	s, err := loadSequences(dataDir)
 	if err != nil {
-		t.Fatalf("Error receiving payload response from EchoServer: %v", err)
+		t.Fatalf("error loading sequences %s", err.Error())
 	}
 
-	fileContents, err := ioutil.ReadFile(testFile)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	if string(respPayload) != string(fileContents) {
-		t.Fatal("Payload sent and received from EchoServer are not equals.")
+	if len(s) < 1 {
+		t.Errorf("no sequence loaded")
 	}
 }
